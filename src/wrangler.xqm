@@ -25,19 +25,18 @@ submit wrangle jobs for each $item
 declare function wrangle:queue($items as item()*,$wrangle as map(*))
 as xs:string{
 let $wid:=random:uuid()
-let $opts:=map{"cache":true()}
 let $jobs:=$items!job:eval($wrangle?xq, 
                             map:merge(($wrangle?bindings(.),map:entry($wrangle:id,$wid))),
-                            $opts)
+                            map{"cache":true()}
+                            )
                        
-let $current:=store:get-or-put($wrangle:id,function(){map{}})
 let $this:=map:entry($wid,map:entry("jobs",$jobs!map:entry(.,
                                                  map{
                                                     "complete":false(),
                                                     "details":job:list-details(.)
                                                  }))) 
 
-let $_:=store:put($wrangle:id,map:merge((($this,$current))))                            
+let $_:=store:put($wrangle:id,map:merge((($this,wrangle:store()))))                            
 return $wid
 };
 
@@ -50,19 +49,19 @@ as xs:string*{
 (:~ known wrangles :)
 declare function wrangle:list()
 as xs:string*{
-    store:get-or-put($wrangle:id,function(){map{}})=>map:keys()
+    wrangle:store()=>map:keys()
 };
 
 (:~ known wrangles :)
 declare function wrangle:list-details($wid as xs:string)
 as map(*){
-    store:get-or-put($wrangle:id,function(){map{}})=>map:get($wid)
+    wrangle:store()=>map:get($wid)
 };
 
 (:~ all wrangled jobs :)
 declare function wrangle:job-list()
 as xs:string*{
-job:list()[job:bindings(.)=>map:contains($wrangle:id)]
+  job:list()[job:bindings(.)=>map:contains($wrangle:id)]
 };
 
 (:~  jobs for wrangle id :)
@@ -70,17 +69,26 @@ declare function wrangle:job-list($wid as xs:string)
  as xs:string*{
    job:list()[job:bindings(.)?($wrangle:id) eq $wid]
 };
+
 (:~  is wrangle id finished (or unknown) :)
 declare function wrangle:finished($wid as xs:string)
  as xs:string*{
    every $job in job:list()[job:bindings(.)?($wrangle:id) eq $wid] satisfies job:finished($job)
 };
 
+(:~  wait  wrangle id finished (or unknown) :)
+declare function wrangle:wait($wid as xs:string)
+ as empty-sequence(){
+   let $done:=every $job in job:list()[job:bindings(.)?($wrangle:id) eq $wid] 
+              satisfies empty(job:wait($job))
+    return if($done) then ()
+};
+
 (:~  cancel wrangle id :)
 declare function wrangle:remove($wid as xs:string)
 as  empty-sequence(){
    job:list()[job:bindings(.)?($wrangle:id) eq $wid]!job:remove(.),
-   store:put($wrangle:id,store:get($wrangle:id)=>map:remove($wid))
+   store:put($wrangle:id,wrangle:store()=>map:remove($wid))
 };
 
 (:~ tally of non-zero job status for $wid  "scheduled", "queued", "running", "cached" :)
@@ -162,6 +170,11 @@ declare function wrangle:schedule-service()
 as xs:string{
     wrangle:service()
     =>job:eval((), map { 'id':$wrangle:id, 'service':true(),'interval': 'PT1S' })
+};
+
+declare function wrangle:store()
+as map(*){
+  store:get-or-put($wrangle:id,function(){map{}})
 };
 
 (:~ @return map string->count  for fold-left :)
